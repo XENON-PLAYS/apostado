@@ -150,6 +150,7 @@ function MusicPlayer() {
   const [playing, setPlaying] = useState(false)
   const [muted, setMuted] = useState(false)
   const [open, setOpen] = useState(false)
+  const [progress, setProgress] = useState(0)
 
   const play = () => {
     if (!audioRef.current) return
@@ -166,7 +167,32 @@ function MusicPlayer() {
     if (playing) audioRef.current?.play().catch(() => setPlaying(false))
   }, [track])
 
-  return <div className="fixed bottom-5 right-5 z-50"><audio ref={audioRef} src={tracks[track].src} muted={muted} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => changeTrack(1)} /><div className={`flex items-center overflow-hidden rounded-2xl border border-white/10 bg-[#101621]/95 shadow-[0_18px_60px_rgba(0,0,0,.5)] backdrop-blur-xl transition-all duration-500 ${open ? 'w-[310px] p-2' : 'w-12 p-1.5'}`}><button onClick={() => setOpen(!open)} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary to-indigo-600 text-white shadow-lg shadow-primary/20"><Music2 size={17} /></button>{open && <div className="ml-3 flex min-w-0 flex-1 items-center gap-2"><div className="min-w-0 flex-1"><p className="truncate text-xs font-bold text-zinc-200">{tracks[track].title}</p><p className="mt-0.5 truncate text-[9px] uppercase tracking-wider text-zinc-600">{tracks[track].artist}</p></div><button onClick={() => changeTrack(-1)} className="text-zinc-600 transition hover:text-white"><ChevronLeft size={16} /></button><button onClick={play} className="grid h-8 w-8 place-items-center rounded-lg bg-white/[.06] text-white transition hover:bg-primary">{playing ? <Pause size={14} /> : <Play size={14} />}</button><button onClick={() => changeTrack(1)} className="text-zinc-600 transition hover:text-white"><ChevronRight size={16} /></button><button onClick={() => setMuted(!muted)} className="text-zinc-600 transition hover:text-white">{muted ? <VolumeX size={15} /> : <Volume2 size={15} />}</button></div>}</div></div>
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = 0.45
+    if (localStorage.getItem('adquira-music-visited')) return
+    localStorage.setItem('adquira-music-visited', 'true')
+    setOpen(true)
+    const start = () => {
+      audioRef.current?.play().then(() => setPlaying(true)).catch(() => undefined)
+      window.removeEventListener('pointerdown', start)
+      window.removeEventListener('keydown', start)
+    }
+    audioRef.current?.play().then(() => setPlaying(true)).catch(() => {
+      window.addEventListener('pointerdown', start, { once: true })
+      window.addEventListener('keydown', start, { once: true })
+    })
+    return () => {
+      window.removeEventListener('pointerdown', start)
+      window.removeEventListener('keydown', start)
+    }
+  }, [])
+
+  const updateProgress = () => {
+    const audio = audioRef.current
+    if (audio?.duration) setProgress((audio.currentTime / audio.duration) * 100)
+  }
+
+  return <div className="fixed bottom-5 right-5 z-50"><audio ref={audioRef} src={tracks[track].src} muted={muted} onTimeUpdate={updateProgress} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => changeTrack(1)} /><div className={`relative flex items-center overflow-hidden rounded-2xl border border-white/10 bg-[#101621]/95 shadow-[0_18px_60px_rgba(0,0,0,.5)] backdrop-blur-xl transition-all duration-500 ${open ? 'w-[330px] p-2.5' : 'w-12 p-1.5'}`}><span className="absolute inset-x-0 bottom-0 h-0.5 bg-white/5"><span className="block h-full bg-gradient-to-r from-primary to-cyan-400 transition-[width]" style={{ width: `${progress}%` }} /></span><button onClick={() => setOpen(!open)} className={`relative grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary to-indigo-600 text-white shadow-lg shadow-primary/20 ${playing ? 'pulse-ring' : ''}`}><Music2 size={17} />{playing && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-[#101621] bg-emerald-400" />}</button>{open && <div className="ml-3 flex min-w-0 flex-1 items-center gap-2"><div className="min-w-0 flex-1"><div className="mb-1 flex items-center gap-1"><span className="h-2 w-0.5 animate-pulse bg-primary" /><span className="h-3 w-0.5 animate-pulse bg-violet-400 [animation-delay:150ms]" /><span className="h-1.5 w-0.5 animate-pulse bg-cyan-400 [animation-delay:300ms]" /><p className="ml-1 truncate text-xs font-bold text-zinc-200">{tracks[track].title}</p></div><p className="truncate text-[9px] uppercase tracking-wider text-zinc-600">{tracks[track].artist}</p></div><button onClick={() => changeTrack(-1)} className="text-zinc-600 transition hover:text-white"><ChevronLeft size={16} /></button><button onClick={play} className="grid h-8 w-8 place-items-center rounded-lg bg-white/[.06] text-white transition hover:bg-primary">{playing ? <Pause size={14} /> : <Play size={14} className="ml-0.5" />}</button><button onClick={() => changeTrack(1)} className="text-zinc-600 transition hover:text-white"><ChevronRight size={16} /></button><button onClick={() => setMuted(!muted)} className="text-zinc-600 transition hover:text-white">{muted ? <VolumeX size={15} /> : <Volume2 size={15} />}</button></div>}</div></div>
 }
 
 function Metric({ value, label }: { value: string; label: string }) { return <div className="rounded-xl border border-white/5 bg-white/[.025] p-4"><p className="text-2xl font-bold">{value}</p><p className="mt-1 text-[11px] text-zinc-500">{label}</p></div> }
