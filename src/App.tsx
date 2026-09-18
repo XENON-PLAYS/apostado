@@ -269,6 +269,9 @@ type BotSettings = {
   presence_status: string
 }
 
+type Guild = { name: string }
+type ActivityLog = { id: string; action: string; details: string; timestamp: string }
+
 const initialBotSettings: BotSettings = {
   queue_channel_ids: '',
   queue_types: '1x1, 2x2, 3x3',
@@ -290,18 +293,54 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [botToken, setBotToken] = useState('')
   const [showToken, setShowToken] = useState(false)
   const [mobileMenu, setMobileMenu] = useState(false)
+  const [guilds, setGuilds] = useState<Guild[]>([])
+  const [activities, setActivities] = useState<ActivityLog[]>([])
   const active = new Date(user.expiresAt).getTime() > Date.now()
   const firstName = user.name.split(' ')[0]
   const completion = [settings.queue_channel_ids, settings.queue_types, settings.queue_message].filter(Boolean).length
   const setupProgress = Math.round((completion / 3) * 100)
 
   useEffect(() => {
-    supabase.from('profiles').select('queue_channel_ids, queue_types, queue_message, mention_players, reply_dm, rich_presence, bot_status, presence_type, presence_text, presence_status').eq('id', user.id).single().then(({ data }) => {
+    supabase.from('profiles').select('queue_channel_ids, queue_types, queue_message, mention_players, reply_dm, rich_presence, bot_status, presence_type, presence_text, presence_status').eq('id', user.id).single().then(async ({ data }) => {
       if (data) {
         setSettings(data as BotSettings)
         setRunning(data.bot_status === 'running')
       }
+      const { data: botSettings } = await supabase.from('bot_settings').select('token, queue_message, mention_players, rich_presence, presence_activity').eq('user_id', user.id).maybeSingle()
+      if (botSettings) {
+        setBotToken(botSettings.token)
+        setSettings((current) => ({ ...current, queue_message: botSettings.queue_message, mention_players: botSettings.mention_players, rich_presence: botSettings.rich_presence, presence_text: botSettings.presence_activity }))
+      }
     })
+  }, [user.id])
+
+  useEffect(() => {
+    const fetchGuilds = async () => {
+      const { data } = await supabase.from('user_guilds').select('name').eq('user_id', user.id)
+      setGuilds(data ?? [])
+    }
+
+    void fetchGuilds()
+  }, [user.id])
+
+  useEffect(() => {
+    const loadActivities = async () => {
+      const { data } = await supabase.from('bot_logs').select('id, action, details, timestamp').eq('user_id', user.id).order('timestamp', { ascending: false }).limit(10)
+      setActivities(data ?? [])
+    }
+
+    void loadActivities()
+
+    const channel = supabase
+      .channel(`bot-logs-${user.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bot_logs', filter: `user_id=eq.${user.id}` }, (payload) => {
+        setActivities((current) => [payload.new as ActivityLog, ...current].slice(0, 10))
+      })
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
   }, [user.id])
 
   const updateSetting = <K extends keyof BotSettings>(key: K, value: BotSettings[K]) => setSettings((current) => ({ ...current, [key]: value }))
@@ -312,12 +351,20 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     updateSetting('queue_types', next.join(', '))
   }
 
-  const saveSettings = async () => {
+  const handleSaveSettings = async () => {
     setSaved('Salvando...')
-    const { error } = await supabase.from('profiles').update(settings).eq('id', user.id)
+    const { error } = await supabase.from('bot_settings').upsert({
+      user_id: user.id,
+      token: botToken,
+      queue_message: settings.queue_message,
+      mention_players: settings.mention_players,
+      rich_presence: settings.rich_presence,
+      presence_activity: settings.presence_text,
+    })
     setSaved(error ? 'Não foi possível salvar.' : 'Configurações salvas.')
     window.setTimeout(() => setSaved(''), 2500)
   }
+  const saveSettings = handleSaveSettings
 
   const changeStatus = async (next: boolean) => {
     setRunning(next)
@@ -373,7 +420,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
             <div className="space-y-6">
               <section className="rounded-2xl border border-white/[.08] bg-[#0d131e] p-6"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-wider text-zinc-600">Sua licença</p><h2 className="mt-2 text-xl font-bold">Acesso {active ? 'ativo' : 'expirado'}</h2></div><span className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-400/10 text-emerald-400"><KeyRound size={21} /></span></div><div className="mt-5 rounded-xl border border-emerald-400/15 bg-emerald-400/[.06] p-4"><div className="flex justify-between gap-3 text-sm"><span className="text-zinc-500">Tempo restante</span><span className="font-semibold text-emerald-300">{formatRemaining(user.expiresAt)}</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full w-3/4 rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400" /></div></div><p className="mt-4 truncate font-mono text-[11px] text-zinc-700">{user.key}</p></section>
-              <section className="rounded-2xl border border-white/[.08] bg-[#0d131e] p-6"><div className="flex items-center justify-between"><div><h2 className="font-bold">Atividade recente</h2><p className="mt-1 text-xs text-zinc-600">Eventos do bot em tempo real.</p></div><Gauge size={20} className="text-zinc-600" /></div><div className="mt-6 rounded-xl border border-dashed border-white/[.08] py-10 text-center"><span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-white/[.03] text-zinc-700"><Gamepad2 size={20} /></span><p className="mt-3 text-sm font-medium text-zinc-500">Nenhuma atividade ainda</p><p className="mt-1 text-xs text-zinc-700">Os eventos aparecerão ao iniciar o bot.</p></div></section>
+              <section className="rounded-2xl border border-white/[.08] bg-[#0d131e] p-6"><div className="flex items-center justify-between"><div><h2 className="font-bold">Atividade recente</h2><p className="mt-1 text-xs text-zinc-600">Eventos do bot em tempo real.</p></div><Gauge size={20} className="text-zinc-600" /></div>{activities.length ? <div className="mt-5 space-y-2">{activities.map((activity) => <div key={activity.id} className="rounded-xl border border-white/[.06] bg-white/[.025] p-3"><p className="text-sm font-medium text-zinc-300">{activity.action}</p><p className="mt-1 text-xs text-zinc-600">{activity.details}</p></div>)}</div> : <div className="mt-6 rounded-xl border border-dashed border-white/[.08] py-10 text-center"><span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-white/[.03] text-zinc-700"><Gamepad2 size={20} /></span><p className="mt-3 text-sm font-medium text-zinc-500">Nenhuma atividade ainda</p><p className="mt-1 text-xs text-zinc-700">Os eventos aparecerão ao iniciar o bot.</p></div>}</section>
             </div>
           </div>
         </main>
