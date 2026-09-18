@@ -2,7 +2,7 @@ name: Publicar Site no GitHub Pages
 
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
   workflow_dispatch:
 
 permissions:
@@ -11,7 +11,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: "pages"
   cancel-in-progress: true
 
 jobs:
@@ -24,30 +24,118 @@ jobs:
       - name: Baixar código
         uses: actions/checkout@v4
 
-      - name: Configurar Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
+      - name: Configurar Node.js e Bun
+        uses: oven-sh/setup-bun@v2
 
       - name: Instalar dependências
-        run: npm ci
+        run: |
+          if [ -f "bun.lock" ]; then
+            bun install
+          else
+            npm install
+          fi
 
-      - name: Compilar projeto
-        run: npm run build
+      - name: Compilar projeto (Build)
+        run: |
+          if [ -f "bun.lock" ]; then
+            bun run build
+          else
+            npm run build
+          fi
 
-      - name: Preparar GitHub Pages
+      - name: Preparar pasta de publicação
+        id: pages-dir
+        shell: bash
+        run: |
+          node -e '
+            const fs = require("fs");
+            const path = require("path");
+
+            function findOutputDir() {
+              const candidates = [
+                path.join(".", "dist", "client"),
+                path.join(".", ".output", "public"),
+                path.join(".", "dist", "public"),
+                path.join(".", "build", "client"),
+                path.join(".", "build", "public"),
+                path.join(".", "dist"),
+                path.join(".", "build"),
+                path.join(".", "out"),
+                path.join(".", "public")
+              ];
+              for (const c of candidates) {
+                if (fs.existsSync(c)) {
+                  const items = fs.readdirSync(c);
+                  if (items.includes("index.html")) return c;
+                }
+              }
+              // Caso o index.html esteja em subpasta dentro de dist ou .output
+              for (const root of [path.join(".", "dist"), path.join(".", ".output"), path.join(".", "build")]) {
+                if (fs.existsSync(root)) {
+                  for (const sub of fs.readdirSync(root)) {
+                    const subPath = path.join(root, sub);
+                    if (fs.statSync(subPath).isDirectory() && fs.existsSync(path.join(subPath, "index.html"))) {
+                      return subPath;
+                    }
+                  }
+                }
+              }
+              throw new Error("Nenhuma pasta de build segura com index.html foi encontrada");
+            }
+
+            const targetDir = findOutputDir();
+            console.log("Pasta de publicação selecionada:", targetDir);
+
+            // Desativa processamento Jekyll
+            fs.writeFileSync(path.join(targetDir, ".nojekyll"), "");
+
+            // Garante index.html funcional
+            const indexPath = path.join(targetDir, "index.html");
+            if (!fs.existsSync(indexPath)) {
+              if (fs.existsSync("./index.html")) {
+                fs.copyFileSync("./index.html", indexPath);
+              } else if (fs.existsSync("./public/index.html")) {
+                fs.copyFileSync("./public/index.html", indexPath);
+              } else {
+                function findFiles(d, ext) {
+                  let res = [];
+                  if (!fs.existsSync(d)) return res;
+                  for (const f of fs.readdirSync(d, { withFileTypes: true })) {
+                    const full = path.join(d, f.name);
+                    if (f.isDirectory()) res = res.concat(findFiles(full, ext));
+                    else if (f.name.endsWith(ext)) res.push(path.relative(targetDir, full).split(path.sep).join("/"));
+                  }
+                  return res;
+                }
+
+                const js = findFiles(targetDir, ".js")[0];
+                const css = findFiles(targetDir, ".css")[0];
+                const jsTag = js ? `<script type="module" src="./${js}"></script>` : "";
+                const cssTag = css ? `<link rel="stylesheet" href="./${css}">` : "";
+                const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>App</title>${cssTag}</head><body><div id="root"></div>${jsTag}</body></html>`;
+                fs.writeFileSync(indexPath, html, "utf8");
+              }
+            }
+
+            // Suporte SPA: copia index.html para 404.html para suportar rotas diretas
+            const notFoundPath = path.join(targetDir, "404.html");
+            if (fs.existsSync(indexPath) && !fs.existsSync(notFoundPath)) {
+              fs.copyFileSync(indexPath, notFoundPath);
+            }
+
+            const outputVar = "dir=" + targetDir + "\n";
+            if (process.env.GITHUB_OUTPUT) {
+              fs.appendFileSync(process.env.GITHUB_OUTPUT, outputVar);
+            }
+          '
+
+      - name: Configurar GitHub Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
-      - name: Desativar Jekyll
-        run: touch dist/.nojekyll
 
       - name: Empacotar site
         uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: ${{ steps.pages-dir.outputs.dir }}
 
       - name: Publicar no GitHub Pages
         id: deployment
