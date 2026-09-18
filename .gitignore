@@ -11,6 +11,7 @@ dist-ssr/
 .tanstack/**
 .nitro/
 .env
+.env.backup
 .env.local
 *.local
 .wrangler/

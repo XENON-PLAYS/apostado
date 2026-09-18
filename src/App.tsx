@@ -1,11 +1,11 @@
 import { FormEvent, useEffect, useState } from 'react'
-import { ArrowRight, Bot, CheckCircle2, Clock3, KeyRound, LockKeyhole, LogOut, Menu, MessageSquareText, ShieldCheck, Sparkles, UsersRound, X } from 'lucide-react'
+import { Activity as ActivityIcon, ArrowRight, Bot, CheckCircle2, Clock3, Gamepad2, Gauge, KeyRound, LayoutDashboard, LockKeyhole, LogOut, Menu, MessageSquareText, Play, Save, Server, Settings2, ShieldCheck, Sparkles, Square, UsersRound, X, Zap } from 'lucide-react'
+import { supabase } from './lib/supabase'
 
 type View = 'home' | 'login' | 'register' | 'dashboard'
-type User = { name: string; password: string; key: string; expiresAt: string }
+type User = { id: string; name: string; key: string; expiresAt: string; role: string }
 
-const USERS_KEY = 'adquira-bot-users'
-const SESSION_KEY = 'adquira-bot-session'
+const accountEmail = (name: string) => `${name.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '')}@adquirabot.app`
 
 const features = [
   { icon: UsersRound, title: 'Filas automatizadas', text: 'Organize entradas e mantenha suas partidas sempre em movimento, sem trabalho manual.' },
@@ -19,8 +19,10 @@ const plans = [
   { name: 'Mensal', period: '30 dias', price: 'R$ 49,90', detail: 'Automação contínua e melhor custo.' },
 ]
 
-function loadUsers(): User[] {
-  try { return JSON.parse(localStorage.getItem(USERS_KEY) || '[]') } catch { return [] }
+async function loadProfile(id: string): Promise<User | null> {
+  const { data, error } = await supabase.from('profiles').select('id, name, access_key, expires_at, role').eq('id', id).single()
+  if (error || !data) return null
+  return { id: data.id, name: data.name, key: data.access_key, expiresAt: data.expires_at, role: data.role }
 }
 
 function formatRemaining(expiresAt: string) {
@@ -38,8 +40,13 @@ function App() {
   const [session, setSession] = useState<User | null>(null)
 
   useEffect(() => {
-    const name = localStorage.getItem(SESSION_KEY)
-    if (name) setSession(loadUsers().find((user) => user.name === name) || null)
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (data.session) setSession(await loadProfile(data.session.user.id))
+    })
+    const { data } = supabase.auth.onAuthStateChange((_event, authSession) => {
+      if (!authSession) setSession(null)
+    })
+    return () => data.subscription.unsubscribe()
   }, [])
 
   const navigate = (next: View) => {
@@ -49,8 +56,8 @@ function App() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const logout = () => {
-    localStorage.removeItem(SESSION_KEY)
+  const logout = async () => {
+    await supabase.auth.signOut()
     setSession(null)
     navigate('home')
   }
@@ -133,40 +140,161 @@ function AuthPage({ mode, onNavigate, onNotice, notice, onLogin }: { mode: 'logi
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
   const [key, setKey] = useState('')
+  const [loading, setLoading] = useState(false)
   const isRegister = mode === 'register'
 
-  const submit = (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault()
-    const users = loadUsers()
+    if (name.trim().length < 3 || password.length < 6) return onNotice('Preencha um nome válido e uma senha de pelo menos 6 caracteres.')
+    setLoading(true)
     if (isRegister) {
-      if (name.trim().length < 3 || password.length < 6 || key.trim().length < 5) return onNotice('Preencha nome, senha de 6 caracteres e uma key válida.')
-      if (users.some((user) => user.name.toLowerCase() === name.trim().toLowerCase())) return onNotice('Este nome já está cadastrado.')
       const keyUpper = key.trim().toUpperCase()
       const days = keyUpper.startsWith('DIA') ? 1 : keyUpper.startsWith('SEM') ? 7 : keyUpper.startsWith('MEN') ? 30 : 0
-      if (!days) return onNotice('A key deve começar com DIA, SEM ou MEN.')
-      const user = { name: name.trim(), password, key: keyUpper, expiresAt: new Date(Date.now() + days * 86400000).toISOString() }
-      localStorage.setItem(USERS_KEY, JSON.stringify([...users, user]))
+      if (!days) {
+        setLoading(false)
+        return onNotice('A key deve começar com DIA, SEM ou MEN.')
+      }
+      const expiresAt = new Date(Date.now() + days * 86400000).toISOString()
+      const { error } = await supabase.auth.signUp({
+        email: accountEmail(name),
+        password,
+        options: { data: { name: name.trim(), access_key: keyUpper, expires_at: expiresAt } },
+      })
+      setLoading(false)
+      if (error) return onNotice(error.message.includes('already registered') ? 'Este nome já está cadastrado.' : 'Não foi possível criar a conta.')
+      await supabase.auth.signOut()
       onNavigate('login')
       onNotice('Cadastro realizado. Entre com seus dados.')
       return
     }
-    const user = users.find((item) => item.name.toLowerCase() === name.trim().toLowerCase() && item.password === password)
-    if (!user) return onNotice('Nome ou senha incorretos.')
-    if (new Date(user.expiresAt).getTime() <= Date.now()) return onNotice('Sua key expirou. Ative uma nova key para entrar.')
-    localStorage.setItem(SESSION_KEY, user.name)
+    const { data, error } = await supabase.auth.signInWithPassword({ email: accountEmail(name), password })
+    if (error || !data.user) {
+      setLoading(false)
+      return onNotice('Nome ou senha incorretos.')
+    }
+    const user = await loadProfile(data.user.id)
+    setLoading(false)
+    if (!user) return onNotice('Perfil não encontrado. Verifique a configuração do banco.')
+    if (new Date(user.expiresAt).getTime() <= Date.now()) {
+      await supabase.auth.signOut()
+      return onNotice('Sua key expirou. Ative uma nova key para entrar.')
+    }
     onLogin(user)
   }
 
-  return <div className="grid min-h-screen bg-ink text-zinc-100 grid-bg lg:grid-cols-2"><div className="hidden border-r border-white/5 lg:flex lg:flex-col lg:justify-between lg:p-12"><button onClick={() => onNavigate('home')} className="flex w-fit items-center gap-3 font-bold"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary"><Bot size={22} /></span> ADQUIRA<span className="-ml-3 text-primary">BOT</span></button><div className="max-w-lg"><p className="text-sm font-bold tracking-[.2em] text-primary">CRESÇA NO AUTOMÁTICO</p><h2 className="mt-5 text-5xl font-extrabold leading-tight">Mais alcance. Menos trabalho manual.</h2><p className="mt-6 text-lg leading-8 text-zinc-400">Entre para gerenciar sua automação e movimentar sua comunidade todos os dias.</p></div><p className="text-sm text-zinc-600">Sua comunidade, sempre ativa.</p></div><div className="flex items-center justify-center p-5"><div className="w-full max-w-md"><button onClick={() => onNavigate('home')} className="mb-10 flex items-center gap-2 text-sm text-zinc-500 hover:text-white"><ArrowRight className="rotate-180" size={16} /> Voltar ao início</button><div className="rounded-3xl border border-white/10 bg-panel/90 p-7 shadow-2xl sm:p-9"><span className="grid h-12 w-12 place-items-center rounded-xl bg-primary/15 text-primary">{isRegister ? <KeyRound /> : <LockKeyhole />}</span><h1 className="mt-6 text-3xl font-extrabold">{isRegister ? 'Crie sua conta' : 'Bem-vindo de volta'}</h1><p className="mt-2 text-sm text-zinc-500">{isRegister ? 'Cadastre seus dados e ative seu acesso.' : 'Entre para acessar seu painel.'}</p>{notice && <div className="mt-5 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-200">{notice}</div>}<form onSubmit={submit} className="mt-7 space-y-5"><Field label="Nome" value={name} onChange={setName} placeholder="Seu nome de usuário" /><Field label="Senha" value={password} onChange={setPassword} placeholder="Mínimo de 6 caracteres" password />{isRegister && <Field label="Key de acesso" value={key} onChange={setKey} placeholder="Ex: SEM-XXXX-XXXX" />}<button className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary p-4 font-bold transition hover:bg-violet-500">{isRegister ? 'Criar conta' : 'Entrar no painel'} <ArrowRight size={18} /></button></form><p className="mt-6 text-center text-sm text-zinc-500">{isRegister ? 'Já possui uma conta?' : 'Ainda não tem uma conta?'} <button onClick={() => onNavigate(isRegister ? 'login' : 'register')} className="font-bold text-primary hover:text-violet-400">{isRegister ? 'Entrar' : 'Cadastre-se'}</button></p></div></div></div></div>
+  return <div className="grid min-h-screen bg-ink text-zinc-100 grid-bg lg:grid-cols-2"><div className="hidden border-r border-white/5 lg:flex lg:flex-col lg:justify-between lg:p-12"><button onClick={() => onNavigate('home')} className="flex w-fit items-center gap-3 font-bold"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary"><Bot size={22} /></span> ADQUIRA<span className="-ml-3 text-primary">BOT</span></button><div className="max-w-lg"><p className="text-sm font-bold tracking-[.2em] text-primary">CRESÇA NO AUTOMÁTICO</p><h2 className="mt-5 text-5xl font-extrabold leading-tight">Mais alcance. Menos trabalho manual.</h2><p className="mt-6 text-lg leading-8 text-zinc-400">Entre para gerenciar sua automação e movimentar sua comunidade todos os dias.</p></div><p className="text-sm text-zinc-600">Sua comunidade, sempre ativa.</p></div><div className="flex items-center justify-center p-5"><div className="w-full max-w-md"><button onClick={() => onNavigate('home')} className="mb-10 flex items-center gap-2 text-sm text-zinc-500 hover:text-white"><ArrowRight className="rotate-180" size={16} /> Voltar ao início</button><div className="rounded-3xl border border-white/10 bg-panel/90 p-7 shadow-2xl sm:p-9"><span className="grid h-12 w-12 place-items-center rounded-xl bg-primary/15 text-primary">{isRegister ? <KeyRound /> : <LockKeyhole />}</span><h1 className="mt-6 text-3xl font-extrabold">{isRegister ? 'Crie sua conta' : 'Bem-vindo de volta'}</h1><p className="mt-2 text-sm text-zinc-500">{isRegister ? 'Cadastre seus dados e ative seu acesso.' : 'Entre para acessar seu painel.'}</p>{notice && <div className="mt-5 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-200">{notice}</div>}<form onSubmit={submit} className="mt-7 space-y-5"><Field label="Nome" value={name} onChange={setName} placeholder="Seu nome de usuário" /><Field label="Senha" value={password} onChange={setPassword} placeholder="Mínimo de 6 caracteres" password />{isRegister && <Field label="Key de acesso" value={key} onChange={setKey} placeholder="Ex: SEM-XXXX-XXXX" />}<button disabled={loading} className="flex w-full items-center justify-center gap-2 rounded-xl bg-primary p-4 font-bold transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60">{loading ? 'Aguarde...' : isRegister ? 'Criar conta' : 'Entrar no painel'} <ArrowRight size={18} /></button></form><p className="mt-6 text-center text-sm text-zinc-500">{isRegister ? 'Já possui uma conta?' : 'Ainda não tem uma conta?'} <button onClick={() => onNavigate(isRegister ? 'login' : 'register')} className="font-bold text-primary hover:text-violet-400">{isRegister ? 'Entrar' : 'Cadastre-se'}</button></p></div></div></div></div>
 }
 
 function Field({ label, value, onChange, placeholder, password }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; password?: boolean }) { return <label className="block"><span className="mb-2 block text-sm font-semibold text-zinc-300">{label}</span><input required type={password ? 'password' : 'text'} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3.5 outline-none transition placeholder:text-zinc-700 focus:border-primary/70 focus:ring-2 focus:ring-primary/10" /></label> }
 
-function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
-  const active = new Date(user.expiresAt).getTime() > Date.now()
-  return <div className="min-h-screen bg-ink text-zinc-100 grid-bg"><header className="border-b border-white/5 bg-panel/70"><div className="mx-auto flex h-20 max-w-6xl items-center justify-between px-5"><div className="flex items-center gap-3 font-bold"><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary"><Bot size={22} /></span> ADQUIRA<span className="-ml-3 text-primary">BOT</span></div><button onClick={onLogout} className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2 text-sm text-zinc-400 hover:bg-white/5 hover:text-white"><LogOut size={16} /> Sair</button></div></header><main className="mx-auto max-w-6xl px-5 py-12"><p className="text-zinc-500">Visão geral</p><h1 className="mt-2 text-3xl font-extrabold">Olá, {user.name}.</h1><div className="mt-10 grid gap-5 md:grid-cols-3"><DashboardCard icon={<ShieldCheck />} label="Status do acesso" value={active ? 'Ativo' : 'Expirado'} accent /><DashboardCard icon={<Clock3 />} label="Tempo da key" value={formatRemaining(user.expiresAt)} /><DashboardCard icon={<KeyRound />} label="Sua key" value={user.key} /></div><div className="mt-6 rounded-2xl border border-white/10 bg-panel p-7"><div className="flex items-center gap-3"><span className="grid h-11 w-11 place-items-center rounded-xl bg-primary/15 text-primary"><Bot /></span><div><h2 className="font-bold">Configuração do bot</h2><p className="text-sm text-zinc-500">A área de automações será conectada aqui.</p></div></div><div className="mt-7 rounded-xl border border-dashed border-white/10 p-10 text-center text-sm text-zinc-600">Seu painel está pronto para receber as configurações do bot.</div></div></main></div>
+type BotSettings = {
+  bot_token: string
+  queue_types: string
+  queue_message: string
+  mention_players: boolean
+  reply_dm: boolean
+  rich_presence: boolean
+  bot_status: string
 }
 
-function DashboardCard({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent?: boolean }) { return <div className={`rounded-2xl border p-6 ${accent ? 'border-primary/30 bg-primary/[.08]' : 'border-white/10 bg-panel'}`}><span className={accent ? 'text-primary' : 'text-zinc-500'}>{icon}</span><p className="mt-5 text-sm text-zinc-500">{label}</p><p className="mt-2 truncate text-xl font-bold">{value}</p></div> }
+const initialBotSettings: BotSettings = {
+  bot_token: '',
+  queue_types: '1x1, 2x2, 3x3',
+  queue_message: 'Entre na fila e aguarde sua vez!',
+  mention_players: true,
+  reply_dm: false,
+  rich_presence: true,
+  bot_status: 'stopped',
+}
+
+function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
+  const [section, setSection] = useState('Visão geral')
+  const [settings, setSettings] = useState(initialBotSettings)
+  const [saved, setSaved] = useState('')
+  const [running, setRunning] = useState(false)
+  const active = new Date(user.expiresAt).getTime() > Date.now()
+
+  useEffect(() => {
+    supabase.from('profiles').select('bot_token, queue_types, queue_message, mention_players, reply_dm, rich_presence, bot_status').eq('id', user.id).single().then(({ data }) => {
+      if (data) {
+        setSettings(data as BotSettings)
+        setRunning(data.bot_status === 'running')
+      }
+    })
+  }, [user.id])
+
+  const updateSetting = <K extends keyof BotSettings>(key: K, value: BotSettings[K]) => setSettings((current) => ({ ...current, [key]: value }))
+
+  const saveSettings = async () => {
+    setSaved('Salvando...')
+    const { error } = await supabase.from('profiles').update(settings).eq('id', user.id)
+    setSaved(error ? 'Não foi possível salvar.' : 'Configurações salvas.')
+    window.setTimeout(() => setSaved(''), 2500)
+  }
+
+  const changeStatus = async (next: boolean) => {
+    setRunning(next)
+    const bot_status = next ? 'running' : 'stopped'
+    setSettings((current) => ({ ...current, bot_status }))
+    await supabase.from('profiles').update({ bot_status }).eq('id', user.id)
+  }
+
+  const navItems = [
+    { name: 'Visão geral', icon: LayoutDashboard },
+    { name: 'Meu bot', icon: Bot },
+    { name: 'Filas', icon: UsersRound },
+    { name: 'Servidores', icon: Server },
+  ]
+
+  return (
+    <div className="min-h-screen bg-[#080b12] text-zinc-100">
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-white/[.07] bg-[#0c111b] p-5 lg:flex">
+        <div className="flex items-center gap-3 px-2 py-2"><span className="grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br from-violet-500 to-indigo-600 shadow-lg shadow-violet-500/20"><Bot size={23} /></span><div><p className="font-extrabold tracking-tight">ADQUIRA BOT</p><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-zinc-600">Control center</p></div></div>
+        <nav className="mt-10 space-y-1.5">{navItems.map(({ name, icon: Icon }) => <button key={name} onClick={() => setSection(name)} className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition ${section === name ? 'bg-primary text-white shadow-lg shadow-primary/15' : 'text-zinc-500 hover:bg-white/5 hover:text-zinc-200'}`}><Icon size={18} />{name}</button>)}</nav>
+        <div className="mt-auto rounded-2xl border border-white/[.07] bg-white/[.025] p-4"><div className="flex items-center justify-between"><span className="text-xs font-semibold text-zinc-400">STATUS DO BOT</span><span className={`h-2 w-2 rounded-full ${running ? 'bg-emerald-400 shadow-[0_0_10px_#34d399]' : 'bg-zinc-600'}`} /></div><p className="mt-3 text-sm font-bold">{running ? 'Online' : 'Offline'}</p><p className="mt-1 text-xs text-zinc-600">{running ? 'Automação em execução' : 'Aguardando inicialização'}</p></div>
+        <button onClick={onLogout} className="mt-4 flex items-center justify-center gap-2 rounded-xl border border-red-500/20 py-3 text-sm text-red-400 transition hover:bg-red-500/10"><LogOut size={16} /> Sair da conta</button>
+      </aside>
+
+      <div className="lg:pl-64">
+        <header className="sticky top-0 z-20 flex h-20 items-center justify-between border-b border-white/[.07] bg-[#080b12]/85 px-5 backdrop-blur-xl sm:px-8"><div><p className="text-xs font-medium text-zinc-600">PAINEL / {section.toUpperCase()}</p><h1 className="mt-1 flex items-center gap-2 text-xl font-bold">Olá, {user.name}{user.role === 'admin' && <span className="rounded-md bg-primary/15 px-2 py-1 text-[10px] font-bold tracking-wider text-primary">ADMIN</span>}</h1></div><div className="flex items-center gap-3"><span className={`hidden items-center gap-2 rounded-full border px-3 py-1.5 text-xs sm:flex ${running ? 'border-emerald-400/20 bg-emerald-400/10 text-emerald-300' : 'border-white/10 text-zinc-500'}`}><span className={`h-1.5 w-1.5 rounded-full ${running ? 'bg-emerald-400' : 'bg-zinc-600'}`} />{running ? 'Bot online' : 'Bot offline'}</span><button onClick={onLogout} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 text-zinc-500 lg:hidden"><LogOut size={17} /></button></div></header>
+
+        <main className="mx-auto max-w-[1500px] p-5 sm:p-8">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <DashboardCard icon={<ShieldCheck size={20} />} label="Licença" value={active ? 'Ativa' : 'Expirada'} detail={formatRemaining(user.expiresAt)} accent />
+            <DashboardCard icon={<ActivityIcon size={20} />} label="Status do bot" value={running ? 'Online' : 'Offline'} detail={running ? 'Operando normalmente' : 'Pronto para iniciar'} />
+            <DashboardCard icon={<UsersRound size={20} />} label="Entradas nas filas" value="0" detail="Nenhuma entrada hoje" />
+            <DashboardCard icon={<Zap size={20} />} label="Mensagens enviadas" value="0" detail="Aguardando atividade" />
+          </div>
+
+          <div className="mt-6 grid items-start gap-6 xl:grid-cols-[1.35fr_.65fr]">
+            <section className="overflow-hidden rounded-2xl border border-white/[.08] bg-[#0d131e]">
+              <div className="flex items-center justify-between border-b border-white/[.07] px-6 py-5"><div><h2 className="font-bold">Configuração do bot</h2><p className="mt-1 text-xs text-zinc-600">Personalize como sua automação deve funcionar.</p></div><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary"><Settings2 size={20} /></span></div>
+              <div className="space-y-5 p-6">
+                <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">Token da conta</span><input type="password" value={settings.bot_token} onChange={(event) => updateSetting('bot_token', event.target.value)} placeholder="Cole o token de acesso" className="w-full rounded-xl border border-white/[.08] bg-[#080d15] px-4 py-3 text-sm outline-none transition placeholder:text-zinc-700 focus:border-primary/60" /></label>
+                <div className="grid gap-4 sm:grid-cols-2"><label><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">Tipos de fila</span><input value={settings.queue_types} onChange={(event) => updateSetting('queue_types', event.target.value)} className="w-full rounded-xl border border-white/[.08] bg-[#080d15] px-4 py-3 text-sm outline-none focus:border-primary/60" /></label><label><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">Presença</span><select className="w-full rounded-xl border border-white/[.08] bg-[#080d15] px-4 py-3 text-sm outline-none"><option>Jogando Free Fire</option><option>Gerenciando filas</option><option>Personalizado</option></select></label></div>
+                <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">Mensagem da fila</span><textarea value={settings.queue_message} onChange={(event) => updateSetting('queue_message', event.target.value)} rows={3} className="w-full resize-none rounded-xl border border-white/[.08] bg-[#080d15] px-4 py-3 text-sm outline-none focus:border-primary/60" /></label>
+                <div className="space-y-3"><SettingToggle title="Mencionar jogadores" text="Marca o adversário e os participantes após cada entrada." enabled={settings.mention_players} onChange={(value) => updateSetting('mention_players', value)} /><SettingToggle title="Responder mensagens privadas" text="Responde automaticamente às mensagens recebidas." enabled={settings.reply_dm} onChange={(value) => updateSetting('reply_dm', value)} /><SettingToggle title="Rich Presence" text="Exibe o status do bot no perfil da conta." enabled={settings.rich_presence} onChange={(value) => updateSetting('rich_presence', value)} /></div>
+                <div className="flex flex-wrap items-center gap-3 border-t border-white/[.07] pt-5"><button onClick={saveSettings} className="flex items-center gap-2 rounded-xl bg-primary px-5 py-3 text-sm font-bold transition hover:bg-violet-500"><Save size={17} /> Salvar alterações</button>{!running ? <button onClick={() => changeStatus(true)} className="flex items-center gap-2 rounded-xl bg-emerald-500/15 px-5 py-3 text-sm font-bold text-emerald-300 transition hover:bg-emerald-500/25"><Play size={17} /> Iniciar bot</button> : <button onClick={() => changeStatus(false)} className="flex items-center gap-2 rounded-xl bg-red-500/10 px-5 py-3 text-sm font-bold text-red-300 transition hover:bg-red-500/20"><Square size={15} /> Parar bot</button>}<span className="text-xs text-emerald-400">{saved}</span></div>
+              </div>
+            </section>
+
+            <div className="space-y-6">
+              <section className="rounded-2xl border border-white/[.08] bg-[#0d131e] p-6"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-wider text-zinc-600">Sua licença</p><h2 className="mt-2 text-xl font-bold">Acesso {active ? 'ativo' : 'expirado'}</h2></div><span className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-400/10 text-emerald-400"><KeyRound size={21} /></span></div><div className="mt-5 rounded-xl border border-emerald-400/15 bg-emerald-400/[.06] p-4"><div className="flex justify-between gap-3 text-sm"><span className="text-zinc-500">Tempo restante</span><span className="font-semibold text-emerald-300">{formatRemaining(user.expiresAt)}</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full w-3/4 rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400" /></div></div><p className="mt-4 truncate font-mono text-[11px] text-zinc-700">{user.key}</p></section>
+              <section className="rounded-2xl border border-white/[.08] bg-[#0d131e] p-6"><div className="flex items-center justify-between"><div><h2 className="font-bold">Atividade recente</h2><p className="mt-1 text-xs text-zinc-600">Eventos do bot em tempo real.</p></div><Gauge size={20} className="text-zinc-600" /></div><div className="mt-6 rounded-xl border border-dashed border-white/[.08] py-10 text-center"><span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-white/[.03] text-zinc-700"><Gamepad2 size={20} /></span><p className="mt-3 text-sm font-medium text-zinc-500">Nenhuma atividade ainda</p><p className="mt-1 text-xs text-zinc-700">Os eventos aparecerão ao iniciar o bot.</p></div></section>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  )
+}
+
+function SettingToggle({ title, text, enabled, onChange }: { title: string; text: string; enabled: boolean; onChange: (value: boolean) => void }) {
+  return <button type="button" onClick={() => onChange(!enabled)} className="flex w-full items-center justify-between gap-4 rounded-xl border border-white/[.07] bg-[#090e17] p-4 text-left"><span><span className="block text-sm font-semibold">{title}</span><span className="mt-1 block text-xs text-zinc-600">{text}</span></span><span className={`relative h-6 w-11 shrink-0 rounded-full transition ${enabled ? 'bg-primary' : 'bg-zinc-800'}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white transition ${enabled ? 'left-6' : 'left-1'}`} /></span></button>
+}
+
+function DashboardCard({ icon, label, value, detail, accent }: { icon: React.ReactNode; label: string; value: string; detail: string; accent?: boolean }) {
+  return <div className={`rounded-2xl border p-5 ${accent ? 'border-primary/25 bg-gradient-to-br from-primary/[.12] to-[#0d131e]' : 'border-white/[.08] bg-[#0d131e]'}`}><div className="flex items-start justify-between"><span className={`grid h-10 w-10 place-items-center rounded-xl ${accent ? 'bg-primary/15 text-primary' : 'bg-white/[.04] text-zinc-500'}`}>{icon}</span><span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-700">{label}</span></div><p className="mt-5 text-2xl font-extrabold">{value}</p><p className="mt-1 text-xs text-zinc-600">{detail}</p></div>
+}
 
 export default App

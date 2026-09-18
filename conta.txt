@@ -1,0 +1,2 @@
+NICK:admin
+SENHA:Admin@123456
