@@ -301,15 +301,19 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const setupProgress = Math.round((completion / 3) * 100)
 
   useEffect(() => {
-    supabase.from('profiles').select('queue_channel_ids, queue_types, queue_message, mention_players, reply_dm, rich_presence, bot_status, presence_type, presence_text, presence_status').eq('id', user.id).single().then(async ({ data }) => {
+    supabase.from('profiles').select('queue_channel_ids, queue_types, queue_message, mention_players, reply_dm, rich_presence, bot_status, bot_token, presence_type, presence_text, presence_status').eq('id', user.id).single().then(async ({ data }) => {
       if (data) {
         setSettings(data as BotSettings)
         setRunning(data.bot_status === 'running')
+        setBotToken(data.bot_token ?? '')
       }
-      const { data: botSettings } = await supabase.from('bot_settings').select('token, queue_message, mention_players, rich_presence, presence_text').eq('user_id', user.id).maybeSingle()
+      const { data: botSettings, error: botSettingsError } = await supabase.from('bot_settings').select('token, queue_message, mention_players, rich_presence, presence_text').eq('user_id', user.id).maybeSingle()
       if (botSettings) {
         setBotToken(botSettings.token)
         setSettings((current) => ({ ...current, queue_message: botSettings.queue_message, mention_players: botSettings.mention_players, rich_presence: botSettings.rich_presence, presence_text: botSettings.presence_text }))
+      }
+      if (botSettingsError && botSettingsError.code !== 'PGRST205') {
+        console.error('Erro ao carregar as configurações do bot:', botSettingsError)
       }
     })
   }, [user.id])
@@ -354,7 +358,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const handleSaveSettings = async () => {
     setSaved('Salvando...')
     const [{ error: profileError }, { error: botSettingsError }] = await Promise.all([
-      supabase.from('profiles').update(settings).eq('id', user.id),
+      supabase.from('profiles').update({ ...settings, bot_token: botToken }).eq('id', user.id),
       supabase.from('bot_settings').upsert({
         user_id: user.id,
         token: botToken,
@@ -364,10 +368,13 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         presence_text: settings.presence_text,
       }, { onConflict: 'user_id' }),
     ])
-    const error = profileError ?? botSettingsError
+    const tableMissing = botSettingsError?.code === 'PGRST205'
+    const error = profileError ?? (tableMissing ? null : botSettingsError)
     if (error) {
       console.error('Erro ao salvar as configurações do bot:', error)
       setSaved(`Erro ao salvar: ${error.message}`)
+    } else if (tableMissing) {
+      setSaved('Salvo. Aplique a migration do Supabase para ativar o bot.')
     } else {
       setSaved('Configurações salvas.')
     }
