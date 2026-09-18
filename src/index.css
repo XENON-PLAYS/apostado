@@ -66,6 +66,8 @@ button, input { font: inherit; }
 .progress-animate { animation: progress-grow 1.4s .7s cubic-bezier(.22,1,.36,1) both; }
 .shine { position: relative; overflow: hidden; }
 .shine::after { content: ''; position: absolute; inset: -50% auto -50% 0; width: 35%; background: linear-gradient(90deg, transparent, rgba(255,255,255,.18), transparent); animation: shimmer 4s 1.2s ease-in-out infinite; }
+.auth-card::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(circle at 85% 5%, rgba(124,92,252,.1), transparent 28%); }
+.auth-card > * { position: relative; }
 .hero-word { background: linear-gradient(100deg, #9f86ff 0%, #7655ff 45%, #59d8ff 100%); background-size: 180% auto; -webkit-background-clip: text; background-clip: text; color: transparent; animation: shimmer-text 6s linear infinite; }
 
 @keyframes shimmer-text {
