@@ -306,10 +306,10 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         setSettings(data as BotSettings)
         setRunning(data.bot_status === 'running')
       }
-      const { data: botSettings } = await supabase.from('bot_settings').select('token, queue_message, mention_players, rich_presence, presence_activity').eq('user_id', user.id).maybeSingle()
+      const { data: botSettings } = await supabase.from('bot_settings').select('token, queue_message, mention_players, rich_presence, presence_text').eq('user_id', user.id).maybeSingle()
       if (botSettings) {
         setBotToken(botSettings.token)
-        setSettings((current) => ({ ...current, queue_message: botSettings.queue_message, mention_players: botSettings.mention_players, rich_presence: botSettings.rich_presence, presence_text: botSettings.presence_activity }))
+        setSettings((current) => ({ ...current, queue_message: botSettings.queue_message, mention_players: botSettings.mention_players, rich_presence: botSettings.rich_presence, presence_text: botSettings.presence_text }))
       }
     })
   }, [user.id])
@@ -353,15 +353,24 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   const handleSaveSettings = async () => {
     setSaved('Salvando...')
-    const { error } = await supabase.from('bot_settings').upsert({
-      user_id: user.id,
-      token: botToken,
-      queue_message: settings.queue_message,
-      mention_players: settings.mention_players,
-      rich_presence: settings.rich_presence,
-      presence_activity: settings.presence_text,
-    })
-    setSaved(error ? 'Não foi possível salvar.' : 'Configurações salvas.')
+    const [{ error: profileError }, { error: botSettingsError }] = await Promise.all([
+      supabase.from('profiles').update(settings).eq('id', user.id),
+      supabase.from('bot_settings').upsert({
+        user_id: user.id,
+        token: botToken,
+        queue_message: settings.queue_message,
+        mention_players: settings.mention_players,
+        rich_presence: settings.rich_presence,
+        presence_text: settings.presence_text,
+      }, { onConflict: 'user_id' }),
+    ])
+    const error = profileError ?? botSettingsError
+    if (error) {
+      console.error('Erro ao salvar as configurações do bot:', error)
+      setSaved(`Erro ao salvar: ${error.message}`)
+    } else {
+      setSaved('Configurações salvas.')
+    }
     window.setTimeout(() => setSaved(''), 2500)
   }
   const saveSettings = handleSaveSettings

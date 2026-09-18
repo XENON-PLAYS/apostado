@@ -66,7 +66,7 @@ async function updatePresence() {
   if (configs.length === 0) return;
 
   const mainConfig = configs[0]; // Pega a config do primeiro usuário ativo
-  client.user.setActivity(mainConfig.presence_activity || 'Free Fire', { 
+  client.user.setActivity(mainConfig.presence_text || 'Free Fire', { 
     type: 2 // Listening
   });
 }
