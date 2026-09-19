@@ -311,10 +311,11 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         setRunning(data.bot_status === 'running')
         setBotToken(data.bot_token ?? '')
       }
-      const { data: botSettings, error: botSettingsError } = await supabase.from('bot_settings').select('token, queue_message, mention_players, rich_presence, presence_text').eq('user_id', user.id).maybeSingle()
+      const { data: botSettings, error: botSettingsError } = await supabase.from('bot_settings').select('*').eq('user_id', user.id).maybeSingle()
       if (botSettings) {
         setBotToken(botSettings.token)
-        setSettings((current) => ({ ...current, queue_message: botSettings.queue_message, mention_players: botSettings.mention_players, rich_presence: botSettings.rich_presence, presence_text: botSettings.presence_text }))
+        setSettings((current) => ({ ...current, ...botSettings }))
+        if (botSettings.bot_status) setRunning(botSettings.bot_status === 'running')
       }
       if (botSettingsError && botSettingsError.code !== 'PGRST205') {
         console.error('Erro ao carregar as configurações do bot:', botSettingsError)
@@ -363,8 +364,9 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     setSaved('Salvando...')
 
     // Salva no profile (backup) e no bot_settings (o que o bot.js realmente usa)
+    const { guild_id, ticket_message, ...profileSettings } = settings
     const [{ error: profileError }, { error: botSettingsError }] = await Promise.all([
-      supabase.from('profiles').update({ ...settings, bot_token: botToken }).eq('id', user.id),
+      supabase.from('profiles').update({ ...profileSettings, bot_token: botToken }).eq('id', user.id),
       supabase.from('bot_settings').upsert({
         user_id: user.id,
         token: botToken,
