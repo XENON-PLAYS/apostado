@@ -363,26 +363,21 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const handleSaveSettings = async () => {
     setSaved('Salvando...')
 
-    // Salva no profile (backup) e no bot_settings (o que o bot.js realmente usa)
-    const { guild_id, ticket_message, ...profileSettings } = settings
-    const [{ error: profileError }, { error: botSettingsError }] = await Promise.all([
-      supabase.from('profiles').update({ ...profileSettings, bot_token: botToken }).eq('id', user.id),
-      supabase.from('bot_settings').upsert({
-        user_id: user.id,
-        token: botToken,
-        guild_id: settings.guild_id,
-        queue_channel_ids: settings.queue_channel_ids,
-        queue_types: settings.queue_types,
-        queue_message: settings.queue_message,
-        ticket_message: settings.ticket_message,
-        mention_players: settings.mention_players,
-        reply_dm: settings.reply_dm,
-        rich_presence: settings.rich_presence,
-        presence_text: settings.presence_text,
-      }, { onConflict: 'user_id' }),
-    ])
+    const { error: botSettingsError } = await supabase.from('bot_settings').upsert({
+      user_id: user.id,
+      token: botToken,
+      guild_id: settings.guild_id,
+      queue_channel_ids: settings.queue_channel_ids,
+      queue_types: settings.queue_types,
+      queue_message: settings.queue_message,
+      ticket_message: settings.ticket_message,
+      mention_players: settings.mention_players,
+      reply_dm: settings.reply_dm,
+      rich_presence: settings.rich_presence,
+      presence_text: settings.presence_text,
+    }, { onConflict: 'user_id' })
     const tableMissing = botSettingsError?.code === 'PGRST205'
-    const error = profileError ?? (tableMissing ? null : botSettingsError)
+    const error = tableMissing ? null : botSettingsError
     if (error) {
       console.error('Erro ao salvar as configurações do bot:', error)
       setSaved(`Erro ao salvar: ${error.message}`)
