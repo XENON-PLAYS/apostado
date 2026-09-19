@@ -299,6 +299,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   const [mobileMenu, setMobileMenu] = useState(false)
   const [guilds, setGuilds] = useState<Guild[]>([])
   const [activities, setActivities] = useState<ActivityLog[]>([])
+  const [queueCount, setQueueCount] = useState(0)
   const active = new Date(user.expiresAt).getTime() > Date.now()
   const firstName = user.name.split(' ')[0]
   const completion = [settings.queue_channel_ids, settings.queue_types, settings.queue_message].filter(Boolean).length
@@ -333,6 +334,20 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   }, [user.id])
 
   useEffect(() => {
+    const fetchStats = async () => {
+      const { count, error } = await supabase
+        .from('bot_logs')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('action', 'QUEUE_RESPONSE')
+
+      if (!error) setQueueCount(count ?? 0)
+    }
+
+    void fetchStats()
+  }, [user.id])
+
+  useEffect(() => {
     const loadActivities = async () => {
       const { data } = await supabase.from('bot_logs').select('id, action, details, timestamp').eq('user_id', user.id).order('timestamp', { ascending: false }).limit(10)
       setActivities(data ?? [])
@@ -344,6 +359,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       .channel(`bot-logs-${user.id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bot_logs', filter: `user_id=eq.${user.id}` }, (payload) => {
         setActivities((current) => [payload.new as ActivityLog, ...current].slice(0, 10))
+        if ((payload.new as ActivityLog).action === 'QUEUE_RESPONSE') setQueueCount((current) => current + 1)
       })
       .subscribe()
 
@@ -425,7 +441,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <DashboardCard icon={<ShieldCheck size={20} />} label="Licença" value={active ? 'Ativa' : 'Expirada'} detail={formatRemaining(user.expiresAt)} accent />
             <DashboardCard icon={<ActivityIcon size={20} />} label="Status do bot" value={running ? 'Online' : 'Offline'} detail={running ? 'Operando normalmente' : 'Pronto para iniciar'} />
-            <DashboardCard icon={<UsersRound size={20} />} label="Entradas nas filas" value="0" detail="Nenhuma entrada hoje" />
+            <DashboardCard icon={<UsersRound size={20} />} label="Entradas nas filas" value={String(queueCount)} detail="Respostas registradas" />
             <DashboardCard icon={<Zap size={20} />} label="Mensagens enviadas" value="0" detail="Aguardando atividade" />
           </div>
 
