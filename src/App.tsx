@@ -339,7 +339,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
         .from('bot_logs')
         .select('*', { count: 'exact', head: true })
         .eq('user_id', user.id)
-        .eq('action', 'QUEUE_RESPONSE')
+        .in('action', ['BUTTON_CLICK', 'QUEUE_RESPONSE'])
 
       if (!error) setQueueCount(count ?? 0)
     }
@@ -358,8 +358,9 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
     const channel = supabase
       .channel(`bot-logs-${user.id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'bot_logs', filter: `user_id=eq.${user.id}` }, (payload) => {
-        setActivities((current) => [payload.new as ActivityLog, ...current].slice(0, 10))
-        if ((payload.new as ActivityLog).action === 'QUEUE_RESPONSE') setQueueCount((current) => current + 1)
+        const newLog = payload.new as ActivityLog
+        setActivities((current) => [newLog, ...current].slice(0, 10))
+        if (newLog.action === 'BUTTON_CLICK' || newLog.action === 'QUEUE_RESPONSE') setQueueCount((current) => current + 1)
       })
       .subscribe()
 
@@ -462,7 +463,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
             <div className="space-y-6">
               <section className="rounded-2xl border border-white/[.08] bg-[#0d131e] p-6"><div className="flex items-center justify-between"><div><p className="text-xs font-semibold uppercase tracking-wider text-zinc-600">Sua licença</p><h2 className="mt-2 text-xl font-bold">Acesso {active ? 'ativo' : 'expirado'}</h2></div><span className="grid h-11 w-11 place-items-center rounded-xl bg-emerald-400/10 text-emerald-400"><KeyRound size={21} /></span></div><div className="mt-5 rounded-xl border border-emerald-400/15 bg-emerald-400/[.06] p-4"><div className="flex justify-between gap-3 text-sm"><span className="text-zinc-500">Tempo restante</span><span className="font-semibold text-emerald-300">{formatRemaining(user.expiresAt)}</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/5"><div className="h-full w-3/4 rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400" /></div></div><p className="mt-4 truncate font-mono text-[11px] text-zinc-700">{user.key}</p></section>
-              <section className="rounded-2xl border border-white/[.08] bg-[#0d131e] p-6"><div className="flex items-center justify-between"><div><h2 className="font-bold">Atividade recente</h2><p className="mt-1 text-xs text-zinc-600">Eventos do bot em tempo real.</p></div><Gauge size={20} className="text-zinc-600" /></div>{activities.length ? <div className="mt-5 space-y-2">{activities.map((activity) => <div key={activity.id} className="rounded-xl border border-white/[.06] bg-white/[.025] p-3"><p className="text-sm font-medium text-zinc-300">{activity.action}</p><p className="mt-1 text-xs text-zinc-600">{activity.details}</p></div>)}</div> : <div className="mt-6 rounded-xl border border-dashed border-white/[.08] py-10 text-center"><span className="mx-auto grid h-11 w-11 place-items-center rounded-full bg-white/[.03] text-zinc-700"><Gamepad2 size={20} /></span><p className="mt-3 text-sm font-medium text-zinc-500">Nenhuma atividade ainda</p><p className="mt-1 text-xs text-zinc-700">Os eventos aparecerão ao iniciar o bot.</p></div>}</section>
+              <section className="rounded-2xl border border-white/[.08] bg-[#0d131e] p-6"><div className="flex items-center justify-between"><div><h2 className="font-bold">Atividade recente</h2><p className="mt-1 text-xs text-zinc-600">Eventos do bot em tempo real.</p></div><Gauge size={20} className="text-zinc-600" /></div><div className="mt-4 space-y-3">{activities.length === 0 ? <div className="flex flex-col items-center justify-center py-10 text-zinc-600"><Gamepad2 size={32} className="mb-3 opacity-20" /><p className="text-sm font-medium">Nenhuma atividade ainda</p><p className="text-xs opacity-60">Os eventos aparecerão ao iniciar o bot.</p></div> : <div className="space-y-2">{activities.map((log) => <div key={log.id} className="flex items-center justify-between rounded-xl border border-white/5 bg-white/[.02] p-3 transition hover:bg-white/[.04]"><div className="flex items-center gap-3"><div className={`h-2 w-2 rounded-full ${log.action === 'BUTTON_CLICK' ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-primary'}`} /><div><p className="text-xs font-bold text-zinc-200">{log.action === 'BUTTON_CLICK' ? 'Clique Automático' : 'Resposta de Ticket'}</p><p className="text-[11px] text-zinc-500">{log.details}</p></div></div><span className="text-[10px] text-zinc-600">{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>)}</div>}</div></section>
             </div>
           </div>
         </main>
