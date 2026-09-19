@@ -257,6 +257,8 @@ function AuthFeature({ icon, title, text }: { icon: React.ReactNode; title: stri
 function Field({ label, value, onChange, placeholder, password }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; password?: boolean }) { return <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">{label}</span><input required type={password ? 'password' : 'text'} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="auth-field w-full rounded-xl border border-white/[.08] bg-[#080d15] px-4 py-3 text-sm outline-none placeholder:text-zinc-800 focus:border-primary/60 focus:ring-4 focus:ring-primary/[.07]" /></label> }
 
 type BotSettings = {
+  guild_id: string
+  ticket_message: string
   queue_channel_ids: string
   queue_types: string
   queue_message: string
@@ -273,6 +275,8 @@ type Guild = { name: string }
 type ActivityLog = { id: string; action: string; details: string; timestamp: string }
 
 const initialBotSettings: BotSettings = {
+  guild_id: '',
+  ticket_message: 'Olá! Um mediador já irá te atender no seu ticket.',
   queue_channel_ids: '',
   queue_types: '1x1, 2x2, 3x3',
   queue_message: 'Entre na fila e aguarde sua vez!',
@@ -303,7 +307,7 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
   useEffect(() => {
     supabase.from('profiles').select('queue_channel_ids, queue_types, queue_message, mention_players, reply_dm, rich_presence, bot_status, bot_token, presence_type, presence_text, presence_status').eq('id', user.id).single().then(async ({ data }) => {
       if (data) {
-        setSettings(data as BotSettings)
+        setSettings((current) => ({ ...current, ...data }))
         setRunning(data.bot_status === 'running')
         setBotToken(data.bot_token ?? '')
       }
@@ -357,12 +361,17 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
 
   const handleSaveSettings = async () => {
     setSaved('Salvando...')
+
+    // Salva no profile (backup) e no bot_settings (o que o bot.js realmente usa)
     const [{ error: profileError }, { error: botSettingsError }] = await Promise.all([
       supabase.from('profiles').update({ ...settings, bot_token: botToken }).eq('id', user.id),
       supabase.from('bot_settings').upsert({
         user_id: user.id,
         token: botToken,
+        guild_id: settings.guild_id,
+        queue_types: settings.queue_types,
         queue_message: settings.queue_message,
+        ticket_message: settings.ticket_message,
         mention_players: settings.mention_players,
         rich_presence: settings.rich_presence,
         presence_text: settings.presence_text,
@@ -374,9 +383,9 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
       console.error('Erro ao salvar as configurações do bot:', error)
       setSaved(`Erro ao salvar: ${error.message}`)
     } else if (tableMissing) {
-      setSaved('Salvo. Aplique a migration do Supabase para ativar o bot.')
+      setSaved('Erro: Tabela bot_settings não encontrada no Supabase.')
     } else {
-      setSaved('Configurações salvas.')
+      setSaved('Configurações sincronizadas com o Bot!')
     }
     window.setTimeout(() => setSaved(''), 2500)
   }
@@ -426,6 +435,8 @@ function Dashboard({ user, onLogout }: { user: User; onLogout: () => void }) {
               <div className="flex items-center justify-between border-b border-white/[.07] px-6 py-5"><div><h2 className="font-bold">Configuração do bot</h2><p className="mt-1 text-xs text-zinc-600">Personalize como sua automação deve funcionar.</p></div><span className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary"><Settings2 size={20} /></span></div>
               <div className="space-y-5 p-6">
                 <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">Token da conta</span><span className="relative block"><input type={showToken ? 'text' : 'password'} value={botToken} onChange={(event) => setBotToken(event.target.value)} placeholder="Cole o token de acesso" className="w-full rounded-xl border border-white/[.08] bg-[#080d15] px-4 py-3 pr-12 text-sm outline-none transition placeholder:text-zinc-700 focus:border-primary/60 focus:ring-4 focus:ring-primary/[.07]" /><button type="button" onClick={() => setShowToken(!showToken)} className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-zinc-600 transition hover:text-zinc-300">{showToken ? <EyeOff size={17} /> : <Eye size={17} />}</button></span></label>
+                <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">ID do Servidor (Guild ID)</span><input value={settings.guild_id} onChange={(event) => updateSetting('guild_id', event.target.value)} placeholder="Ex: 123456789012345678" className="w-full rounded-xl border border-white/[.08] bg-[#080d15] px-4 py-3 text-sm outline-none transition placeholder:text-zinc-700 focus:border-primary/60 focus:ring-4 focus:ring-primary/[.07]" /></label>
+                <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">Mensagem de Boas-vindas no Ticket</span><input value={settings.ticket_message} onChange={(event) => updateSetting('ticket_message', event.target.value)} placeholder="Digite a frase para tickets" className="w-full rounded-xl border border-white/[.08] bg-[#080d15] px-4 py-3 text-sm outline-none transition placeholder:text-zinc-700 focus:border-primary/60 focus:ring-4 focus:ring-primary/[.07]" /></label>
                 <div><div className="mb-3 flex items-end justify-between"><div><span className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Tipos de fila</span><p className="mt-1 text-[11px] text-zinc-700">Selecione todos os modos disponíveis para sua comunidade.</p></div><span className="rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold text-violet-300">{selectedQueues.length} ativos</span></div><div className="grid grid-cols-2 gap-2.5 sm:grid-cols-5">{queueOptions.map((queue) => { const selected = selectedQueues.includes(queue); return <button type="button" key={queue} onClick={() => toggleQueue(queue)} className={`relative overflow-hidden rounded-xl border p-3 text-left transition ${selected ? 'border-primary/35 bg-primary/[.09] text-white shadow-[0_0_20px_rgba(124,92,252,.08)]' : 'border-white/[.07] bg-[#080d15] text-zinc-600 hover:border-white/[.13] hover:text-zinc-300'}`}><span className={`mb-3 grid h-8 w-8 place-items-center rounded-lg text-xs font-extrabold ${selected ? 'bg-primary text-white' : 'bg-white/[.04]'}`}>{queue.split('x')[0]}</span><span className="block text-sm font-bold">{queue}</span><span className="mt-0.5 block text-[9px] uppercase tracking-wider opacity-50">Modo de jogo</span>{selected && <CheckCircle2 size={14} className="absolute right-2.5 top-2.5 text-primary" />}</button> })}</div></div>
                 <div className="rounded-2xl border border-white/[.07] bg-gradient-to-br from-[#0a101a] to-[#0c121d] p-4 sm:p-5"><div className="mb-4 flex items-center justify-between"><div><span className="block text-xs font-semibold uppercase tracking-wider text-zinc-500">Presença do bot</span><p className="mt-1 text-[11px] text-zinc-700">Defina como o bot aparecerá para os jogadores.</p></div><div className="flex items-center gap-2 rounded-full border border-white/[.07] bg-black/20 px-3 py-1.5 text-[10px] text-zinc-500"><span className={`h-2 w-2 rounded-full ${settings.presence_status === 'online' ? 'bg-emerald-400' : settings.presence_status === 'idle' ? 'bg-amber-400' : settings.presence_status === 'dnd' ? 'bg-red-400' : 'bg-zinc-500'}`} />Prévia</div></div><div className="grid gap-3 sm:grid-cols-[.8fr_1.35fr_.8fr]"><label><span className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-zinc-600">Atividade</span><select value={settings.presence_type} onChange={(event) => updateSetting('presence_type', event.target.value)} className="w-full rounded-xl border border-white/[.08] bg-[#070c14] px-3 py-3 text-sm outline-none focus:border-primary/60"><option>Jogando</option><option>Assistindo</option><option>Ouvindo</option><option>Competindo</option></select></label><label><span className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-zinc-600">Texto exibido</span><input value={settings.presence_text} maxLength={60} onChange={(event) => updateSetting('presence_text', event.target.value)} placeholder="Ex: Free Fire" className="w-full rounded-xl border border-white/[.08] bg-[#070c14] px-3 py-3 text-sm outline-none placeholder:text-zinc-800 focus:border-primary/60" /><span className="mt-1 block text-right text-[9px] text-zinc-700">{settings.presence_text.length}/60</span></label><label><span className="mb-2 block text-[10px] font-bold uppercase tracking-wider text-zinc-600">Status</span><select value={settings.presence_status} onChange={(event) => updateSetting('presence_status', event.target.value)} className="w-full rounded-xl border border-white/[.08] bg-[#070c14] px-3 py-3 text-sm outline-none focus:border-primary/60"><option value="online">Online</option><option value="idle">Ausente</option><option value="dnd">Não perturbe</option><option value="invisible">Invisível</option></select></label></div><div className="mt-4 flex items-center gap-3 rounded-xl border border-white/[.06] bg-white/[.025] p-3"><span className="relative grid h-10 w-10 shrink-0 place-items-center rounded-full bg-gradient-to-br from-primary to-indigo-600"><Bot size={19} /><span className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-[#0b111b] ${settings.presence_status === 'online' ? 'bg-emerald-400' : settings.presence_status === 'idle' ? 'bg-amber-400' : settings.presence_status === 'dnd' ? 'bg-red-400' : 'bg-zinc-500'}`} /></span><div><p className="text-sm font-bold">Adquira Bot</p><p className="mt-0.5 text-xs text-zinc-600">{settings.presence_type} {settings.presence_text || 'sua comunidade'}</p></div></div></div>
                 <label className="block"><span className="mb-2 block text-xs font-semibold uppercase tracking-wider text-zinc-500">Mensagem da fila</span><textarea value={settings.queue_message} onChange={(event) => updateSetting('queue_message', event.target.value)} rows={3} className="w-full resize-none rounded-xl border border-white/[.08] bg-[#080d15] px-4 py-3 text-sm outline-none focus:border-primary/60" /></label>
